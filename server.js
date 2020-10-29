@@ -37,6 +37,8 @@ app.get('/login', loginPage);
 app.get('/login/session', loginSessionAuto);
 app.post('/login/session', loginSessionManual);
 app.get('/admin', adminPage);
+app.post('/result/:id', saveResult);
+app.get('/history', surveyHistory);
 
 app.get('/result/:id', showResult);
 app.post('/survey/create', createSurvey);
@@ -161,6 +163,60 @@ function showResult(req, res) {
     .catch(err => console.error(err));
 }
 
+function saveResult(req,res){
+  let id = req.params.id;
+  let key = req.cookies.jotform;
+  let URL = `https://api.jotform.com/form/${id}/submissions?apiKey=${key}`;
+
+  // Collect all the submissions for a given form
+  superagent.get(URL)
+    .then(result => {
+      let submissions = result.body.content;
+
+
+      // this is the total numbers of questions asked, we'll set that value in reduce below, so we can use it even later
+      let total = 0;
+      // create an array of each persons sum total of TRUE answers
+      let people = submissions.map( person => {
+        let keys = Object.keys(person.answers);
+        return keys.reduce((acc, key, idx)=>{
+          console.log(person.answers[key]);
+          total = idx; // keep setting that total as the idx
+          return acc + parseInt(person.answers[key].answer === 'YES' ? 1 : 0); // I think this should be changed to TRUE, if we decide the actual form should have true/false answers
+        }, 0);
+      });
+
+      // set up an empty array with a length of 'total', which we set earlier
+      let surveyResults = [];
+      surveyResults.length = total;
+
+      // now lets loop through our 'people' array, and increment the corresponing surveyResults idx
+      for(let i=0; i<people.length; i++)
+        if(!surveyResults[people[i]])
+          surveyResults[people[i]] = 1;
+        else
+          surveyResults[people[i]]++;
+
+      let SQL = `INSERT INTO surveys (surveyid, results) VALUES ($1, $2);`;
+      let values = [id, JSON.stringify(surveyResults)]
+      return client.query(SQL, values)
+        .then( () => {
+          res.redirect('/admin');
+        })
+        .catch(err => console.error('error', err));
+    })
+    .catch(err => console.error(err));
+}
+
+function surveyHistory(req, res){
+  let SQL = `SELECT * FROM result;`;
+  return client.query(SQL)
+    .then(data =>{
+      res.render('pages/historyGraph', {dataHistory : data.rows})
+    })
+    .catch(err => console.error('error',err));
+}
+
 // ------------ CLONE A NEW SURVEY ------------------------------
 
 function createSurvey(req, res) {
@@ -183,19 +239,12 @@ function doSurvey(req, res) {
 }
 
 
-// ------------ START LISTENING ON A PORT -----------------------
+// ------------ START LISTENING ON A PORT ----------------------
 
-app.listen(PORT, () => {
-  console.log(`------- Listening on port : ${PORT} --------`);
-});
-
-
-
-// Not using a db currently
-// client.connect()
-//   .then(() => {
-//     app.listen(PORT, () => {
-//       console.log(`------- Listening on port : ${PORT} --------`);
-//     });
-//   })
-//   .catch(err => console.error(err));
+client.connect()
+  .then(() => {
+    app.listen(PORT, () => {
+      console.log(`------- Listening on port : ${PORT} --------`);
+    });
+  })
+  .catch(err => console.error(err));
